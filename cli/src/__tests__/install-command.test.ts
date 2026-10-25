@@ -198,6 +198,34 @@ describe("managed install commands", () => {
     expect(uiPackCall).toBeDefined();
   });
 
+  it("unpacks payload tarballs under a non-group-writable umask and restores the caller's", async () => {
+    const callerUmask = process.umask(0o002);
+    try {
+      const sha = "e".repeat(40);
+      const inner = createGitCheckoutRunCommand(sha);
+      const groupWriteBits: number[] = [];
+      const runCommand: CommandRunner = async (file, args, options) => {
+        const result = await inner(file, args, options);
+        if (file === "npm" && args[0] === "install") {
+          // npm applies the process umask to archived modes, so a group-writable
+          // umask unpacks pinned executables as 0775 and the copilot materializer
+          // rejects them. Probing with the default file mode exposes the umask in
+          // effect for the payload install.
+          const probe = path.join(args[args.indexOf("--prefix") + 1], "mode-probe");
+          fs.mkdirSync(path.dirname(probe), { recursive: true });
+          fs.writeFileSync(probe, "");
+          groupWriteBits.push(fs.statSync(probe).mode & 0o022);
+        }
+        return result;
+      };
+      await expect(installGitPayload("paperclipai/paperclip", sha, runCommand, resolveInstallStorePaths())).resolves.toMatchObject({ version: "0.3.1", reused: false });
+      expect(groupWriteBits).toEqual([0]);
+      expect(process.umask()).toBe(0o002);
+    } finally {
+      process.umask(callerUmask);
+    }
+  });
+
   it("resolves the complete server workspace dependency closure in dependency order", () => {
     const checkout = path.join(root, "checkout");
     const packages = [

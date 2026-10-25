@@ -209,7 +209,7 @@ export async function installNpmPayload(
       `registry=${PUBLIC_NPM_REGISTRY}\n@paperclipai:registry=${PUBLIC_NPM_REGISTRY}\n`,
       { mode: 0o600 },
     );
-    await runCommand(
+    await withPayloadInstallUmask(() => runCommand(
       "npm",
       [
         "install",
@@ -226,7 +226,7 @@ export async function installNpmPayload(
         env: { ...process.env, npm_config_userconfig: npmUserConfigPath },
         maxBuffer: 16 * 1024 * 1024,
       },
-    );
+    ));
     await smokePayload(stagingPath, version, runCommand);
     fs.renameSync(stagingPath, payloadPath);
     return { payloadPath, reused: false };
@@ -242,6 +242,23 @@ function gitBuildEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   // makes pnpm/npm omit them, so the checkout build must not inherit it.
   delete env.NODE_ENV;
   return env;
+}
+
+/**
+ * npm's tar extractor applies the process umask when it writes archived modes,
+ * so a group-writable umask (the default for user logins) unpacks pinned
+ * executables as 0775. The copilot materializer refuses group- or
+ * world-writable binaries, so payload installs fail on any host whose umask
+ * grants group write. Pin the extraction umask so a payload's permissions do
+ * not depend on how the command was launched.
+ */
+async function withPayloadInstallUmask<T>(run: () => Promise<T>): Promise<T> {
+  const previous = process.umask(0o022);
+  try {
+    return await run();
+  } finally {
+    process.umask(previous);
+  }
 }
 
 export async function installGitPayload(repo: string, sha: string, runCommand: CommandRunner, paths = resolveInstallStorePaths()): Promise<{ payloadPath: string; reused: boolean; version: string }> {
@@ -301,7 +318,7 @@ export async function installGitPayload(repo: string, sha: string, runCommand: C
     if (!cliTarball || workspaceTarballs.length !== workspacePackages.length) {
       throw new Error(`Git install packaging produced ${workspaceTarballs.length} workspace tarballs; expected ${workspacePackages.length}.`);
     }
-    await runCommand("npm", ["install", "--prefix", stagedPayload, path.join(stagingRoot, cliTarball), ...workspaceTarballs.map((entry) => path.join(stagingRoot, entry)), "--no-audit", "--no-fund"], { cwd: stagingRoot, maxBuffer: 32 * 1024 * 1024 });
+    await withPayloadInstallUmask(() => runCommand("npm", ["install", "--prefix", stagedPayload, path.join(stagingRoot, cliTarball), ...workspaceTarballs.map((entry) => path.join(stagingRoot, entry)), "--no-audit", "--no-fund"], { cwd: stagingRoot, maxBuffer: 32 * 1024 * 1024 }));
     await smokePayload(stagedPayload, metadata.version, runCommand);
     fs.renameSync(stagedPayload, payloadPath);
     return { payloadPath, reused: false, version: metadata.version };
