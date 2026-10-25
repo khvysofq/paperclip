@@ -380,6 +380,8 @@ describe("GET /health", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       status: "ok",
+      version: serverVersion,
+      serverVersion,
       deploymentMode: "authenticated",
       deploymentExposure: "public",
       localAiLoginSupported: false,
@@ -438,6 +440,8 @@ describe("GET /health", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       status: "ok",
+      version: serverVersion,
+      serverVersion,
       deploymentMode: "authenticated",
       deploymentExposure: "public",
       localAiLoginSupported: false,
@@ -477,6 +481,8 @@ describe("GET /health", () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       status: "ok",
+      version: serverVersion,
+      serverVersion,
       deploymentMode: "authenticated",
       deploymentExposure: "public",
       localAiLoginSupported: false,

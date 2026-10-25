@@ -256,6 +256,10 @@ export function healthRoutes(
     // secret — so it is surfaced on every response, including the redacted
     // one, unlike the fuller `serverInfo` block. Deploy tooling (and anyone)
     // can read which commit this server is running without authenticating.
+    // `version` is the same class of build identity and rides alongside it:
+    // the CLI's post-restart validation compares the reported version against
+    // the managed install manifest without a board session, so withholding it
+    // here makes every `paperclipai update` look like a failed restart.
     const commit = serverInfo.git.available ? serverInfo.git.fullSha : null;
     const exposeDevServerDetails =
       exposeFullDetails || hasDevServerStatusToken(req.get("x-paperclip-dev-server-status-token"));
@@ -285,6 +289,8 @@ export function healthRoutes(
             }
           : {
               status: healthStatus,
+              version: serverVersion,
+              serverVersion: serverVersion,
               deploymentMode: opts.deploymentMode,
               commit,
               ...(cloud ? { cloud } : {}),
@@ -301,6 +307,8 @@ export function healthRoutes(
     if (opts.isWarmStandby?.()) {
       res.json({
         status: healthStatus,
+        version: serverVersion,
+        serverVersion,
         deploymentMode: opts.deploymentMode,
         deploymentExposure: opts.deploymentExposure,
         commit,
@@ -408,6 +416,8 @@ export function healthRoutes(
       const redactedWarnings = redactedDatabaseBackup?.warnings.length ? redactedDatabaseBackup.warnings : undefined;
       res.json({
         status: healthStatus,
+        version: serverVersion,
+        serverVersion,
         deploymentMode: opts.deploymentMode,
         deploymentExposure: opts.deploymentExposure,
         localAiLoginSupported: supportsLocalAiLogin(opts),
