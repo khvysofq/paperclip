@@ -3,15 +3,54 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const nativeTargets = ["linux-x64", "darwin-arm64", "darwin-x64"];
 
-export function materializePublishManifest(pkg) {
+// A `workspace:` specifier names a sibling package, so it must resolve to that
+// sibling's version. The source tree does not share one version —
+// `@paperclipai/plugin-sdk` is 1.0.0 while the release-train packages are 0.3.1 —
+// so reading the consumer's own version produces an uninstallable manifest
+// (`No matching version found for @paperclipai/plugin-sdk@0.3.1`).
+// scripts/release.sh rewrites every package to the calver release version before
+// packing, which makes both readings agree; the managed from-source install path
+// (paperclipai install --repo) packs the checkout as-is and needs the real one.
+export function loadWorkspacePackageVersions(sourceRoot) {
+  const versions = new Map();
+  // Mirrors the package roots release-package-map.mjs discovers, but keeps
+  // private packages too: they are still valid `workspace:` targets.
+  const walk = (relDir) => {
+    const absDir = resolve(sourceRoot, relDir);
+    if (!existsSync(absDir)) return;
+    const pkgPath = resolve(absDir, "package.json");
+    if (existsSync(pkgPath)) {
+      try {
+        const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+        if (typeof pkg.name === "string" && typeof pkg.version === "string") {
+          versions.set(pkg.name, pkg.version);
+        }
+      } catch {
+        // Unreadable manifest: leave its name unresolved rather than failing the pack.
+      }
+      return;
+    }
+    for (const entry of readdirSync(absDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git") continue;
+      walk(join(relDir, entry.name));
+    }
+  };
+  for (const relDir of ["packages", "server", "ui", "cli"]) walk(relDir);
+  return versions;
+}
+
+export function materializePublishManifest(pkg, workspaceVersions = new Map()) {
   const publishConfig = pkg.publishConfig ?? {};
   const publishManifest = { ...pkg };
+  // A caller that loaded the checkout expects every workspace edge to resolve;
+  // without one, fall back to the consumer's own version for synthetic manifests.
+  const strict = workspaceVersions.size > 0;
 
   for (const key of ["main", "types", "exports", "bin"]) {
     if (publishConfig[key] !== undefined) publishManifest[key] = publishConfig[key];
@@ -24,7 +63,14 @@ export function materializePublishManifest(pkg) {
         if (typeof specifier !== "string" || !specifier.startsWith("workspace:")) return [name, specifier];
         const range = specifier.slice("workspace:".length);
         const prefix = range === "^" || range === "~" ? range : "";
-        return [name, `${prefix}${pkg.version}`];
+        const target = workspaceVersions.get(name);
+        if (target === undefined && strict) {
+          throw new Error(
+            `${pkg.name} declares a workspace dependency on ${name}, which is not a package in this workspace; `
+            + "the packed manifest would point at a version that does not exist",
+          );
+        }
+        return [name, `${prefix}${target ?? pkg.version}`];
       }),
     );
   }
@@ -405,7 +451,7 @@ export function prepareBundledPackage(sourceDir, destinationDir, { sourceRoot = 
   }
 
   const deployedPackagePath = resolve(destinationDir, "package.json");
-  const publishManifest = materializePublishManifest(sourcePackage);
+  const publishManifest = materializePublishManifest(sourcePackage, loadWorkspacePackageVersions(sourceRoot));
   const rootPackage = JSON.parse(readFileSync(resolve(sourceRoot, "package.json"), "utf8"));
   const profileData = bundledDependencies.includes("@agentclientprotocol/codex-acp")
     ? JSON.parse(readFileSync(resolve(sourceRoot, "packages/paperclip-runner/acpx-profiles.json"), "utf8")) : undefined;
