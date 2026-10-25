@@ -77,9 +77,24 @@ node "$REPO_ROOT/scripts/prepare-npm-readme.mjs" \
   "$CLI_DIR/README.md" \
   "$README_ASSET_REF"
 
-# ── Step 6: Summary ───────────────────────────────────────────────────────────
+# ── Step 6: Stage bundled workspace package artifacts ──────────────────────────
+# scripts/release.sh stages these before packing, but the managed from-source
+# install path (paperclipai install --repo) packs workspace packages straight
+# from this checkout without running release.sh. prepare-bundled-package.mjs
+# copies server/ui-dist and server/skills verbatim from each package's `files`
+# manifest, so both must exist on disk here or the install fails to pack.
+echo "  [6/7] Staging bundled UI and skills for workspace packages..."
+bash "$REPO_ROOT/scripts/prepare-server-ui-dist.sh"
+for pkg_dir in server packages/adapters/claude-local packages/adapters/codex-local; do
+  if [ -d "$REPO_ROOT/$pkg_dir" ]; then
+    rm -rf "$REPO_ROOT/$pkg_dir/skills"
+    cp -r "$REPO_ROOT/skills" "$REPO_ROOT/$pkg_dir/skills"
+  fi
+done
+
+# ── Step 7: Summary ───────────────────────────────────────────────────────────
 BUNDLE_SIZE=$(wc -c < "$DIST_DIR/index.js" | xargs)
-echo "  [6/6] Build verification..."
+echo "  [7/7] Build verification..."
 echo ""
 echo "Build complete."
 echo "  Bundle: cli/dist/index.js (${BUNDLE_SIZE} bytes)"

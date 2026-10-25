@@ -30,6 +30,17 @@ export function materializePublishManifest(pkg) {
   }
 
   delete publishManifest.publishConfig;
+
+  // Bundled packages are packed from a staged copy that is already built, but
+  // npm pack re-runs prepack/prepare there. Those scripts are workspace-relative
+  // (e.g. `bash ../scripts/prepare-server-ui-dist.sh`) and cannot resolve outside
+  // the checkout, so a staged package would fail to pack. Drop the pack-time
+  // lifecycle hooks; the artifacts they produce are staged alongside this copy.
+  if (publishManifest.scripts) {
+    for (const lifecycle of ["prepack", "postpack", "prepare", "prepublish", "prepublishOnly", "postpublish"]) {
+      delete publishManifest.scripts[lifecycle];
+    }
+  }
   return publishManifest;
 }
 
